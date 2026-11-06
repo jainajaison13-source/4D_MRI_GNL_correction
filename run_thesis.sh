@@ -12,7 +12,7 @@
 # The thesis runs were made through the start dialog (python 4D_MRI_GNL_correction.py without
 # arguments), whose fields correspond one-to-one to the options below (thesis Table 3.4 and
 # Fig. 3.2); the run records store the dialog entries. This script gives the same runs as
-# command lines. The axis-mapping check at the end accepts both forms (source "cli"/"gui").
+# command lines. The axis-mapping check at the end accepts both forms (source "cli"/"dialog").
 
 set -u
 cd "$(dirname "$0")"
@@ -91,7 +91,7 @@ if not dc:
     print("              Look for 'STAGE 5 FAILED' in the log file.")
     sys.exit(1)
 af = dc.get("axis_flags", {})
-ok = af.get("permute_applied") and af.get("signs_applied") and af.get("source") in ("cli", "gui")
+ok = af.get("permute_applied") and af.get("signs_applied") and af.get("source") in ("cli", "dialog")
 print("AXIS MAPPING CHECK:", "OK" if ok else "FAILED", "-", af)
 sys.exit(0 if ok else 1)
 PY
