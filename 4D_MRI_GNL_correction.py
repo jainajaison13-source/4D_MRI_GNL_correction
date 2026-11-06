@@ -8754,24 +8754,12 @@ def _dicom_quick_plot(
     #   deviation of Λ from identity and stays valid over noise voxels;
     #   the ABSOLUTE |Δv| in cm/s is diluted by them and is not a
     #   blood-flow number when the gate is off.
-    def _analysis_set_name():
-        # v1.0.1: name only the masks that were actually applied in this run,
-        # instead of the fixed label "magnitude/brain mask" for every dataset.
-        _parts = ["magnitude mask"]
-        if DICOM_BRAIN_MASK:
-            _parts.append("brain mask")
-        if DICOM_ROI_BOX is not None:
-            _parts.append("analysis box")
-        if DICOM_EXT_MASK:
-            _parts.append("external mask")
-        return " + ".join(_parts)
-
     def _vessel_block(vs):
         _gate_off = bool(vs.get("velocity_gate_disabled"))
         _nc = vs.get("noise_consistency") or {}
         _frac = _nc.get("frac_at_or_below_noise")
         if _gate_off:
-            head = [f"── ANALYSIS SET: {_analysis_set_name()} ──",
+            head = ["── ANALYSIS SET: magnitude/brain mask ──",
                     f"  no velocity gate, n={vs['n_vessel_voxels']:,}"]
         else:
             head = ["── VESSEL VOXELS ONLY (headline) ──",
@@ -11812,15 +11800,7 @@ def main(argv=None):
                                 print(f"           corr(|Δv|,     speed ) = "
                                       f"{_c_spd:+.3f}   (why |Δv| alone "
                                       "understates it)")
-                                # v1.0.1: the first bin starts at the smallest
-                                # radius the data actually sample (e.g. 39 mm),
-                                # not at a fixed 20 mm, so the table does not
-                                # suggest radii that were never measured. Same
-                                # rule as the direction-error profile.
-                                _rmin = int(np.floor(float(np.nanmin(_rr[_ok]))))
-                                _edges = [_rmin, 40, 60, 80, 100, 130, 200]
-                                _edges = [e for i, e in enumerate(_edges)
-                                          if i == 0 or e > _edges[0]]
+                                _edges = [20, 40, 60, 80, 100, 130, 200]
                                 _prof = []
                                 print("             r [mm]     |Δv| cm/s   "
                                       "|Δv|/|v| %        n")
