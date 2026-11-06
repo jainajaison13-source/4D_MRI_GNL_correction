@@ -71,12 +71,15 @@ Output figures
 
 Self-tests
 ----------
-  T1  - identity Lambda round-trip
-  T2  - non-trivial (non-symmetric) Lambda round-trip
-  T3  - SH evaluator vs the closed-form derivative of a known harmonic
-  T3b - regression: primary linear term is not counted twice
-  T4  - Poiseuille peak-velocity check on the discrete grid
-  T5  - model-mismatch robustness (correct with perturbed coefficients)
+  S1  - identity Lambda round-trip
+  S2  - non-trivial (non-symmetric) Lambda round-trip
+  S3  - SH evaluator vs the closed-form derivative of a known harmonic
+  S4  - regression: primary linear term is not counted twice
+  S5  - Poiseuille peak-velocity check on the discrete grid
+  S6  - model-mismatch robustness (correct with perturbed coefficients)
+  (In release v1.0.0 these six tests were labelled T1, T2, T3, T3b, T4 and
+  T5, in the same order; the run-record key T5_model_mismatch is now
+  S6_model_mismatch. Nothing in the tests themselves has changed.)
 
 Scope and limitations of the validation
 ---------------------------------------
@@ -85,12 +88,12 @@ Read this before quoting any number from the synthetic pipeline.
 1. The synthetic forward model and the correction use the SAME Lambda(r).
    Inverting the operator that was just applied is a check of the
    implementation and its numerical conditioning, not of the physical
-   model. Tests T1/T2 are therefore circular BY DESIGN and must not be
+   model. Tests S1/S2 are therefore circular BY DESIGN and must not be
    presented as evidence that the correction works on a scanner.
-   T5 is the non-circular test: it distorts with one coefficient set and
+   S6 is the non-circular test: it distorts with one coefficient set and
    corrects with coefficients perturbed by 2, 5 and 10 % (one random
    per-coefficient Gaussian draw per level), so it measures robustness to the
-   realistic case of an imperfect calibration file. Quote T5, and the
+   realistic case of an imperfect calibration file. Quote S6, and the
    DICOM/phantom results, as the evidence for the method.
 
 2. Lambda is built from the manufacturer's spherical-harmonic expansion,
@@ -137,7 +140,7 @@ Equation map — which code implements which published equation
   SimulationEngine4D.add_phase_noise      sigma_v = sqrt(2)*VENC/(pi*SNR)
                                           (noise of a phase difference; see
                                           the add_phase_noise docstring)
-  generate_poiseuille_4d / self-test T4   Hagen-Poiseuille reference and the
+  generate_poiseuille_4d / self-test S5   Hagen-Poiseuille reference and the
                                           10% pixel/diameter criterion
                                           (Fukuyama 2017; Watanabe 2019)
 
@@ -319,6 +322,26 @@ SNR_MISMATCH_VERBOSE: bool = False
 # │         "xyz" works; use this to correct a known mis-assignment.          │
 # └───────────────────────────────────────────────────────────────────────────┘
 DICOM_DIRECTION_ORDER: Optional[str] = None
+
+# ┌───────────────────────────────────────────────────────────────────────────┐
+# │ Frame LAYOUT of a cardiac 3-direction series (per run: --directions-      │
+# │ blocked, or the dialog checkbox).                                         │
+# │                                                                           │
+# │ False → INTERLEAVED (scanner convention): the frames of one slice run     │
+# │         phase 0 (dir 0, 1, 2), phase 1 (dir 0, 1, 2), …  Each TriggerTime │
+# │         triplet is one cardiac phase. This is the default.                │
+# │ True  → BLOCKED: the frames of one slice run all N phases of direction 0, │
+# │         then all N phases of direction 1, then direction 2 — while the    │
+# │         headers still carry the interleaved TriggerTimes (a post-         │
+# │         processed export that copied the original headers). Sorted by     │
+# │         TriggerTime, frame i is then (direction i // N, phase i % N).     │
+# │                                                                           │
+# │ How to tell: with the wrong layout the three "directions" are three       │
+# │ consecutive phases of ONE component, so they correlate strongly, carry    │
+# │ nearly equal energy shares, and the flux test fails. The run record       │
+# │ stores the layout used (runtime/dicom_frame_layout).                      │
+# └───────────────────────────────────────────────────────────────────────────┘
+DICOM_DIRECTIONS_BLOCKED: bool = False
 
 # ┌───────────────────────────────────────────────────────────────────────────┐
 # │ Per-component velocity SIGN flips, applied AFTER any axis permutation.    │
@@ -840,6 +863,55 @@ FIG_CORONAL_SLICE_MM:       float           = 55.0
 
 DICOM_SAVE_NPZ:             bool            = True
 DICOM_NPZ_MAX_BYTES:        int             = 3 * (2 ** 30)   # 3 GiB
+
+# Crop the four image panels of fig05 to the region that actually contains
+# flow. The acquired volumes are much larger than the object of interest (a
+# 12 mm tube in a 64-96 voxel slice; a vessel tree in a 260 x 320 matrix), so
+# at print size the panels showed mostly empty background. The crop is the
+# bounding box of the displayed flow voxels, padded by DICOM_FIG05_CROP_MARGIN
+# of its size (at least 6 voxels) and never smaller than
+# DICOM_FIG05_CROP_MIN_FRAC of the field of view in either direction, so the
+# object keeps some context. The crop is DISPLAY ONLY: every statistic is
+# computed on the full volume, and the crop box is printed in the footer.
+DICOM_FIG05_CROP: bool = True
+DICOM_FIG05_CROP_MARGIN: float = 0.12
+DICOM_FIG05_CROP_MIN_FRAC: float = 0.30
+# Manual zoom box for the four image panels of fig05, (x0, x1, y0, y1) in
+# voxel indices of the displayed slice (the axes of the panels), or None for
+# the automatic crop above. Use it when the automatic crop finds nothing to
+# cut because the flow reaches the edge of the matrix (the Circle of Willis
+# with its sinuses) but a region of interest should be shown enlarged, e.g.
+#     DICOM_FIG05_ZOOM = (60, 200, 90, 210)      # arterial ring of the CoW
+# Also settable per run with --fig05-zoom 60,200,90,210. Display only; every
+# statistic still uses the full volume, and the box is stated in the footer.
+DICOM_FIG05_ZOOM: Optional[Tuple[int, int, int, int]] = None
+# ── Manual restriction of the ANALYSIS SET (statistics only) ───────────────
+# A voxel box, inclusive indices (x0, x1, y0, y1, z0, z1) in the array axes of
+# the volume: x and y are the axes of the fig05 image panels, z the slice
+# index. Set from the command line with --roi-box; None = no restriction.
+# Use it when the automatic criteria keep something that is not flow, e.g.
+# the static water reservoir of a phantom that lies beside the channel. The
+# correction itself is applied to every voxel regardless; the box only
+# decides which voxels enter the reported statistics.
+DICOM_ROI_BOX: Optional[Tuple[int, int, int, int, int, int]] = None
+# An externally supplied mask (--mask FILE): a .npy/.npz boolean (or 0/1)
+# array on the same grid as the data, or a NIfTI file when nibabel is
+# installed. Non-zero = keep. Combined with the box when both are given.
+DICOM_EXT_MASK: Optional[str] = None
+# Preset-bound zoom, used when DICOM_FIG05_ZOOM is None: a box given as
+# FRACTIONS of the matrix (x0, x1, y0, y1), so it does not depend on the
+# matrix size. The in_vivo_head entry frames the arterial ring of the circle
+# of Willis in an axial head slab centred on the brain (for the 260 x 320
+# matrix of the thesis dataset it is x 60-200, y 90-211 voxels). Presets not
+# listed here (ideal_phantom, pipe, manual) get the automatic crop instead.
+# Set DICOM_FIG05_ZOOM_BY_PRESET = {} to switch this off.
+DICOM_FIG05_ZOOM_BY_PRESET: Dict[str, Tuple[float, float, float, float]] = {
+    "in_vivo_head":  (0.23, 0.77, 0.28, 0.66),
+    # Idealised aneurysm phantom (224 x 224 matrix): the inlet tube and the
+    # channel cross-section lie in the left part of the slice; the static
+    # water reservoir on the right carries no flow and is left out.
+    "ideal_phantom": (0.16, 0.60, 0.00, 0.64),
+}
 
 # Thickness of the fig05 image panels, in slices EITHER SIDE of the display
 # slice, rendered as a maximum-intensity projection. The Circle of Willis is a
@@ -1498,6 +1570,15 @@ def flux_conservation(v_meas3, v_corr3, lumen, spacing_m, axis: int):
         "q_before_ml_min": [float(v) for v in q_b],
         "q_after_ml_min":  [float(v) for v in q_a],
         "plane_index":     [int(v) for v in planes],
+        # Segmented lumen cross-section of every plane in `plane_index`, in
+        # voxels. Stored so that planes whose segmentation collapsed (a loss
+        # of magnitude signal shrinks the lumen and with it Q) can be
+        # identified from the run record alone, e.g. "planes whose area is
+        # within 15 % of the median", without re-running the pipeline.
+        "lumen_area_vox":  ([int(a) for a in area]
+                            if len(area) == len(planes) else None),
+        "lumen_area_median_vox": (float(np.median(area))
+                                  if len(area) == len(planes) else None),
         "segmentation":    _span_note,
     }
 
@@ -1854,7 +1935,7 @@ def _fig_list(*origs: int) -> str:
 PCT_ERROR_VESSEL_FRACTION = 0.20
 
 # Self-test outcomes, filled in by run_self_tests() and written into
-# run_config.json. The console scrollback is not a reproducibility record: T5
+# run_config.json. The console scrollback is not a reproducibility record: S6
 # is the test the thesis quotes as non-circular evidence, so its numbers have
 # to survive in the run log next to the results they support.
 SELF_TEST_RESULTS: Dict[str, object] = {}
@@ -2198,6 +2279,11 @@ class PathSelectorGUI:
         # --direction-permute / --direction-signs). None = axes as loaded.
         self.direction_permute: Optional[str] = None
         self.direction_signs: Optional[Tuple[int, int, int]] = None
+        # Frame layout of a cardiac 3-direction series (same as --directions-blocked).
+        self.directions_blocked: bool = False
+        # Optional restriction of the analysis set (same as --roi-box / --mask).
+        self.roi_box: Optional[str] = None
+        self.ext_mask: Optional[str] = None
         self.dataset_preset: str = DATASET_PRESET   # in_vivo_head / phantom / manual
         self.sim_mode:    int           = 1     # 1=Poiseuille, 2=Pulsatile, 3=Both
         self.flow_pattern: str          = "axial"   # "axial" or "helical"
@@ -2491,6 +2577,52 @@ class PathSelectorGUI:
                       "aneurysm phantom 7 T → yxz and 1,1,-1   ·   pipe 3 T → blank",
                  font=("Segoe UI", 8), fg="#555555").grid(
             row=next_row(), column=0, columnspan=3, sticky="w")
+        blocked_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(body,
+                       text="Directions stored block-wise (all cardiac phases of "
+                            "direction 1, then 2, then 3) — for a post-processed "
+                            "export whose headers kept the interleaved trigger times",
+                       variable=blocked_var, font=("Segoe UI", 9)).grid(
+            row=next_row(), column=0, columnspan=3, sticky="w", pady=(2, 0))
+
+        # ── Analysis-set restriction (optional) ───────────────────────────
+        # Same as --roi-box / --mask: statistics only, the correction is
+        # still applied to every voxel.
+        tk.Label(body,
+                 text="Analysis region (optional) — restrict the statistics to a voxel "
+                      "box or an external mask; blank = automatic masks only. "
+                      "The correction is still applied everywhere:",
+                 font=("Segoe UI", 9, "bold")).grid(
+            row=next_row(), column=0, columnspan=3, sticky="w", pady=(10, 0))
+        roi_var = tk.StringVar(value="")
+        r = next_row()
+        tk.Label(body, text="Box x0,x1,y0,y1,z0,z1 (voxels):",
+                 font=("Segoe UI", 9)).grid(row=r, column=0, sticky="w", pady=2)
+        tk.Entry(body, textvariable=roi_var, width=24).grid(
+            row=r, column=1, sticky="w", padx=8)
+        mask_var = tk.StringVar(value="<none>")
+
+        def _pick_mask():
+            p = filedialog.askopenfilename(
+                title="Select an external mask (.npy / .npz / .nii / .nii.gz)",
+                filetypes=[("Mask files", "*.npy *.npz *.nii *.nii.gz"),
+                           ("All files", "*.*")])
+            if p:
+                self.ext_mask = p
+                mask_var.set(p)
+
+        r = next_row()
+        tk.Button(body, text="Mask file …", width=10, command=_pick_mask).grid(
+            row=r, column=0, sticky="w", pady=2)
+        tk.Label(body, textvariable=mask_var, font=("Consolas", 9),
+                 fg="#555555", anchor="w").grid(
+            row=r, column=1, columnspan=2, sticky="w", padx=8)
+        tk.Label(body,
+                 text="x and y are the axes of the fig05 image panels, z the slice index "
+                      "(inclusive). Read the ranges from the image panels of a first run "
+                      "(e.g. a box around the flow channel that leaves static fluid outside).",
+                 font=("Segoe UI", 8), fg="#555555").grid(
+            row=next_row(), column=0, columnspan=3, sticky="w")
 
 
         # ── Output directory ──────────────────────────────────────────────
@@ -2621,6 +2753,22 @@ class PathSelectorGUI:
             except Exception as _se:
                 messagebox.showerror("Invalid axis signs", str(_se))
                 return
+            self.directions_blocked = bool(blocked_var.get())
+            _rtxt = roi_var.get().strip()
+            if _rtxt:
+                try:
+                    _rv = [int(float(t)) for t in _rtxt.split(",")]
+                    if len(_rv) != 6:
+                        raise ValueError("six integers are needed")
+                    self.roi_box = ",".join(str(v) for v in _rv)
+                except Exception as _re:
+                    messagebox.showerror(
+                        "Invalid analysis box",
+                        "The box must be six integers x0,x1,y0,y1,z0,z1 "
+                        f"(voxel indices), or blank. ({_re})")
+                    return
+            else:
+                self.roi_box = None
             self.sim_mode    = mode_var.get()
             self.flow_pattern = pattern_var.get()
             self.run_dicom   = bool(self.dicom_dir)
@@ -3372,7 +3520,7 @@ Connection to Markl et al. (2003)
         The TRANSPOSE matters. Λ is not symmetric — the cross-terms satisfy
         Λ_xy ≠ Λ_yx — so using Λ in place of Λᵀ silently mixes the velocity
         components. VelocityCorrector.correct_4d inverts with the matching
-        convention; the two are verified against each other by self-test T2.
+        convention; the two are verified against each other by self-test S2.
 
         This identification also justifies the spatially varying VENC used
         by plot_spatially_varying_venc(),
@@ -4646,13 +4794,27 @@ class DicomLoader:
 
         if mode == "cardiac":
             idx = {(l, round(t, 2)): f for l, t, _, f in recs}
-            for s_i, loc in enumerate(locs):
-                for p_i in range(Nt):
-                    for d in range(3):
-                        f = idx.get((loc, round(groups[p_i, d], 2)))
+            if DICOM_DIRECTIONS_BLOCKED:
+                # Blocked layout (see DICOM_DIRECTIONS_BLOCKED): the i-th frame
+                # of a slice, in TriggerTime order, is direction i // Nt,
+                # phase i % Nt — the headers' triplet structure is ignored.
+                for s_i, loc in enumerate(locs):
+                    for i, t in enumerate(tr):
+                        f = idx.get((loc, round(float(t), 2)))
                         if f is not None:
-                            raw[d, :, :, s_i, p_i] = _raw(f, d)
-            detail = f"{Nt} cardiac phases × 3 directions = {n_tr} frames"
+                            raw[i // Nt, :, :, s_i, i % Nt] = _raw(f, i // Nt)
+                detail = (f"{Nt} cardiac phases × 3 directions = {n_tr} frames, "
+                          "BLOCKED layout (all phases of one direction, then "
+                          "the next; set per run)")
+            else:
+                for s_i, loc in enumerate(locs):
+                    for p_i in range(Nt):
+                        for d in range(3):
+                            f = idx.get((loc, round(groups[p_i, d], 2)))
+                            if f is not None:
+                                raw[d, :, :, s_i, p_i] = _raw(f, d)
+                detail = (f"{Nt} cardiac phases × 3 directions = {n_tr} frames, "
+                          "interleaved layout (TriggerTime triplets)")
         else:  # steady — 3 dirs per slice, ordered by InstanceNumber
             by_slice = defaultdict(list)
             for loc, tt, inst, f in recs:
@@ -4708,7 +4870,10 @@ class DicomLoader:
                   + ", ".join(f"frame{d}→v{_spec[d]}" for d in range(3)))
         else:
             # First frame of the first cardiac phase / first slice, per direction
-            if mode == "cardiac":
+            if mode == "cardiac" and DICOM_DIRECTIONS_BLOCKED:
+                _probe = [idx.get((locs[0], round(float(tr[d * Nt]), 2)))
+                          for d in range(3)]
+            elif mode == "cardiac":
                 _probe = [idx.get((locs[0], round(groups[0, d], 2)))
                           for d in range(3)]
             else:
@@ -4806,6 +4971,9 @@ class DicomLoader:
             "Nt":                Nt,
             "Nslices":           n_sl,
             "format":            "interleaved3dir",
+            "frame_layout":      ("blocked" if (mode == "cardiac"
+                                                and DICOM_DIRECTIONS_BLOCKED)
+                                  else "interleaved"),
             # which patient axis each ACQUIRED frame was assigned (frame 0,1,2)
             "direction_axes":    ("".join("xyz"[int(a)] for a in _axes)
                                   if _axes is not None else "xyz"),
@@ -6094,13 +6262,30 @@ class PlottingEngine:
             _suffix = name[3:].split("_", 1)[1] if "_" in name[3:] else name[3:]
             name = f"fig{FIG_RENUMBER[_num]:02d}_{_suffix}"
         p = self.out / name
-        fig.savefig(p, bbox_inches="tight", dpi=150)
+        # Local rendering copy: tolerate a locked/held output file on Windows
+        # (OSError 22/13). Write to a temporary name and rename; retry once;
+        # as a last resort keep the run going with a "_retry" file name.
+        import os as _os, time as _time
+        _tmp = p.with_name(p.stem + "_tmp" + p.suffix)
+        try:
+            fig.savefig(_tmp, bbox_inches="tight", dpi=150)
+            _os.replace(_tmp, p)
+        except OSError:
+            _time.sleep(1.0)
+            try:
+                fig.savefig(_tmp, bbox_inches="tight", dpi=150)
+                _os.replace(_tmp, p)
+            except OSError:
+                p = p.with_name(p.stem + "_retry" + p.suffix)
+                fig.savefig(p, bbox_inches="tight", dpi=150)
+                print(f"  [fig] WARNING: original name was locked — saved as {p.name}")
         plt.close(fig)
         print(f"  [fig] Saved → {p.name}")
 
     @staticmethod
     def _imshow_2d(ax, data, extent, title, cmap, vmin=None, vmax=None,
-                   vcenter=None, unit="", fontsize=8):
+                   vcenter=None, unit="", fontsize=8, cb_fontsize=6,
+                   tick_fontsize=None):
         if vcenter is not None:
             # Guard: TwoSlopeNorm requires strict vmin < vcenter < vmax.
             # When the slice is all-zero the supplied limits collapse to 0,0,0
@@ -6130,10 +6315,12 @@ class PlottingEngine:
         ax.set_xlabel("z [mm]", fontsize=fontsize)
         ax.set_ylabel("x [mm]", fontsize=fontsize)
         ax.set_title(title, fontsize=fontsize)
+        if tick_fontsize is not None:
+            ax.tick_params(labelsize=tick_fontsize)
         cb = plt.colorbar(im, ax=ax, pad=0.02)
-        cb.ax.tick_params(labelsize=6)
+        cb.ax.tick_params(labelsize=cb_fontsize)
         if unit:
-            cb.set_label(unit, fontsize=6)
+            cb.set_label(unit, fontsize=cb_fontsize)
         return im
 
     # ── Figure 1: Cardiac Waveform ─────────────────────────────────────────
@@ -6175,18 +6362,20 @@ class PlottingEngine:
         # y = 0 is a symmetry plane on which four cross terms vanish (see
         # FIG_CORONAL_SLICE_MM). Say which it is, so a reader comparing this
         # figure with Markl 2003 Fig. 1 knows what plane they are looking at.
-        _yl = ("y = 0" if y_mm is None else
-               f"y = {y_mm:+.1f} mm"
-               + (" (off the y = 0 symmetry plane, where Λ_xy, Λ_yx, Λ_yz "
-                  "and Λ_zy vanish identically)" if abs(y_mm) > 1e-6 else
-                  " (symmetry plane: Λ_xy, Λ_yx, Λ_yz, Λ_zy vanish here)"))
+        # PRINT-SIZED HEADLINE. The sheet is placed at text width in the
+        # document, about a third of its drawn size, so the fonts here are
+        # chosen to print at 5-6.5 pt. The former second line (the symmetry-
+        # plane remark and "grey = outside calibration sphere r > R₀,
+        # extrapolated, excluded from the colour scale") is dropped from the
+        # image: it was wider than the figure, which made bbox_inches="tight"
+        # widen the saved sheet by a third and shrink every panel in print,
+        # and both remarks belong in the caption (they are also in the
+        # docstring above and in the console output).
+        _yl = "y = 0" if y_mm is None else f"y = {y_mm:+.1f} mm"
         fig.suptitle(
-            f"Gradient Distortion Matrix  Λ(r)  —  {self.coil}\n"
-            f"(coronal slice, {_yl})"
-            + ("" if m2d is None else
-               "   ·   grey = outside calibration sphere r > R₀ "
-               "(extrapolated, excluded from the colour scale)"),
-            fontsize=10, fontweight="bold")
+            f"Gradient distortion matrix  Λ(r)  —  {self.coil}\n"
+            f"coronal slice, {_yl}",
+            fontsize=17, fontweight="bold")
 
         for j in range(3):
             for i in range(3):
@@ -6210,8 +6399,9 @@ class PlottingEngine:
                 _cm.set_bad(color="lightgrey")
                 self._imshow_2d(ax, dat, extent, ttl,
                                 _cm, vcenter=0, vmin=-vm, vmax=vm,
-                                unit="relative deviation")
-        fig.tight_layout()
+                                unit="relative deviation",
+                                fontsize=13, cb_fontsize=10, tick_fontsize=11)
+        fig.tight_layout(rect=[0, 0, 1, 0.95])
         self._save(fig, "fig02_lambda_matrix.png")
 
     # ── Figure 3: Strength & angular deviation ─────────────────────────────
@@ -6313,14 +6503,15 @@ class PlottingEngine:
         # deliberately so the SYSTEMATIC, spatially structured GNL error stays
         # visible; the noise dependence belongs to the SNR sweep table and the
         # SNR-independent noise-free row.
-        _snr_line = ("" if snr_db is None else
-                     f"\nsimulated at SNR = {snr_db:.0f} dB "
-                     "(the % improvement is a noise statistic — "
-                     "see the SNR sweep)")
+        # PRINT-SIZED HEADLINE (see plot_lambda_matrix): two short lines; the
+        # remark "(the % improvement is a noise statistic — see the SNR
+        # sweep)" is dropped from the image and left to the caption, the
+        # console output and the run record.
+        _snr_line = "" if snr_db is None else f"  ·  simulated at SNR = {snr_db:.0f} dB"
         fig.suptitle(
-            f"Velocity magnitude error before and after correction — "
+            "Velocity magnitude error before and after correction\n"
             f"{mode_label}{_snr_line}",
-            fontsize=11, fontweight="bold")
+            fontsize=17, fontweight="bold")
 
         # Panel 1 — standard recon
         #
@@ -6338,18 +6529,20 @@ class PlottingEngine:
         axes[0].set_title("Standard recon (no correction)\n"
                           f"{n_valid:,}/{n_total:,} voxels evaluated "
                           + ("(steady field)" if steady
-                             else "(peak-systole phase)"), fontsize=9)
-        axes[0].set_xlabel("z [mm]"); axes[0].set_ylabel("x [mm]")
+                             else "(peak-systole phase)"), fontsize=13)
+        axes[0].set_xlabel("z [mm]", fontsize=12); axes[0].set_ylabel("x [mm]", fontsize=12)
         cb1 = plt.colorbar(im1, ax=axes[0], pad=0.02)
-        cb1.set_label(f"%  (0-{emax:.0f})", fontsize=7); cb1.ax.tick_params(labelsize=6)
+        cb1.set_label(f"%  (0-{emax:.0f})", fontsize=10); cb1.ax.tick_params(labelsize=10)
 
         # Panel 2 — corrected
         im2 = axes[1].imshow(err_c[:, iy, :], origin="lower", extent=extent,
                              cmap=cmap, vmin=0, vmax=emax, aspect="auto")
-        axes[1].set_title("Generalised recon (corrected)", fontsize=9)
-        axes[1].set_xlabel("z [mm]"); axes[1].set_ylabel("x [mm]")
+        axes[1].set_title("Generalised recon (corrected)", fontsize=13)
+        axes[1].set_xlabel("z [mm]", fontsize=12); axes[1].set_ylabel("x [mm]", fontsize=12)
         cb2 = plt.colorbar(im2, ax=axes[1], pad=0.02)
-        cb2.set_label(f"%  (0-{emax:.0f})", fontsize=7); cb2.ax.tick_params(labelsize=6)
+        cb2.set_label(f"%  (0-{emax:.0f})", fontsize=10); cb2.ax.tick_params(labelsize=10)
+        for _ax in axes:
+            _ax.tick_params(labelsize=11)
 
         # Panel 3 — histogram (vessel-mask voxels only)
         flat_s = err_s[valid_mask]
@@ -6367,22 +6560,24 @@ class PlottingEngine:
             axes[2].hist(flat_c, bins=bins, alpha=0.72,
                          color=PALETTE["corrected"],
                          label=f"Corrected (median {med_c:.2f}%)")
-            axes[2].set_xlabel("% velocity error  (vessel voxels only)")
-            axes[2].set_ylabel("Voxel count")
+            axes[2].set_xlabel("% velocity error  (vessel voxels only)", fontsize=12)
+            axes[2].set_ylabel("Voxel count", fontsize=12)
+            # Short title for print; which voxel set this is (steady field =
+            # the fig04 set; pulsatile = the peak-systole set, not the
+            # time-averaged set of fig04) is stated in the caption.
             axes[2].set_title(
                 "Error histogram\n"
                 f"({n_valid:,} voxels, |v_true| > "
                 f"{vessel_threshold_m_s*100:.0f} cm/s"
-                + (" — steady flow: same set as fig04)" if steady else
-                   " at PEAK SYSTOLE — a different set from fig04, "
-                   "which uses the time average)"),
-                fontsize=8)
-            axes[2].legend(fontsize=8, loc="upper right")
+                + (", steady flow)" if steady else ", peak systole)"),
+                fontsize=13)
+            axes[2].legend(fontsize=11, loc="upper right")
             axes[2].grid(axis="y", alpha=0.3)
-            axes[2].text(0.95, 0.78,
+            # Below the (now larger) legend, not behind it.
+            axes[2].text(0.95, 0.58,
                          f"Improvement: {improvement:+.1f}%",
                          transform=axes[2].transAxes, ha="right",
-                         fontsize=10, fontweight="bold",
+                         fontsize=14, fontweight="bold",
                          color=(PALETTE["corrected"] if improvement > 0 else "#A32D2D"),
                          bbox=dict(facecolor="white", alpha=0.85,
                                    edgecolor="lightgrey"))
@@ -6396,9 +6591,9 @@ class PlottingEngine:
                          ha="center", va="center", fontsize=10,
                          color="grey")
             axes[2].set_xticks([]); axes[2].set_yticks([])
-            axes[2].set_title("Error histogram (no valid voxels)", fontsize=9)
+            axes[2].set_title("Error histogram (no valid voxels)", fontsize=13)
 
-        fig.tight_layout()
+        fig.tight_layout(rect=[0, 0, 1, 0.88])
         self._save(fig, "fig07_pct_error.png")
 
     # ── Figure 8: Radial stratification ───────────────────────────────────
@@ -7213,25 +7408,25 @@ def run_self_tests(cfg: SimulationConfig,
     Minimal correctness suite for the core simulation pipeline.
 
     `grad_coeffs`, when given, is the ACTUAL coil file loaded for this run.
-    T5 then perturbs those coefficients instead of a four-term toy coil, so
+    S6 then perturbs those coefficients instead of a four-term toy coil, so
     the robustness number that gets quoted in the thesis is the robustness of
     the real gradient system, not of a stand-in. Results are recorded in the
     module-level SELF_TEST_RESULTS dict and written to run_config.json.
 
     Tests
     -----
-    T1  — Identity Lambda: no distortion → corrected == measured == true.
-    T2  — Round-trip: correct_4d(apply_forward(v, Λ), Λ) ≈ v_true, with a
+    S1  — Identity Lambda: no distortion → corrected == measured == true.
+    S2  — Round-trip: correct_4d(apply_forward(v, Λ), Λ) ≈ v_true, with a
           non-symmetric Λ so that a Λ/Λᵀ mix-up would fail.
-    T3  — Spherical-harmonic evaluator vs the closed-form derivative of a
+    S3  — Spherical-harmonic evaluator vs the closed-form derivative of a
           known A(2,0) harmonic (tests Schmidt norm + Legendre + stencil).
-    T3b — Regression: the primary linear term A(1,1)/B(1,1)/A(1,0) must not
+    S4 — Regression: the primary linear term A(1,1)/B(1,1)/A(1,0) must not
           be counted twice, i.e. Λ(0,0,0) = I for a file that lists it.
-    T4  — Poiseuille peak velocity matches the configured value on the grid.
-    T5  — Model mismatch: distort with one coefficient set and correct with
+    S5  — Poiseuille peak velocity matches the configured value on the grid.
+    S6  — Model mismatch: distort with one coefficient set and correct with
           sets perturbed by 2, 5 and 10 % (per-coefficient Gaussian, one
           draw per level, random velocities on a cube of half-width
-          R0/sqrt(3)). T1/T2 are circular by construction; T5 is not,
+          R0/sqrt(3)). S1/S2 are circular by construction; S6 is not,
           and is the test to quote when defending the validation.
 
     Returns True if all tests pass, False otherwise (prints diagnostics).
@@ -7242,7 +7437,7 @@ def run_self_tests(cfg: SimulationConfig,
 
     # Self-tests verify the EXACT inverse algorithm at machine precision.
     # Tikhonov regularisation deliberately introduces a small bias to reduce
-    # noise — that bias would fail T1 / T2 by construction. We therefore
+    # noise — that bias would fail S1 / S2 by construction. We therefore
     # build the test corrector with λ = 0 (exact inverse), while leaving
     # the production cfg.tikhonov_lambda value untouched.
     test_cfg = copy.copy(cfg)
@@ -7255,7 +7450,7 @@ def run_self_tests(cfg: SimulationConfig,
     tol_tight  = 1e-6    # m/s — numerical tolerance for exact tests
     tol_loose  = 1e-4    # m/s — tolerance for noise-free distortion round-trip
 
-    # ── T1: Identity Lambda ───────────────────────────────────────────────
+    # ── S1: Identity Lambda ───────────────────────────────────────────────
     try:
         N = 8
         sp = (N, N, N)
@@ -7269,13 +7464,13 @@ def run_self_tests(cfg: SimulationConfig,
         err   = float(np.abs(v_cor - v_rand).max())
         ok    = err < tol_tight
         passed.append(ok)
-        print(f"  [T1] Identity-Lambda round-trip:  max_err = {err:.2e} m/s  "
+        print(f"  [S1] Identity-Lambda round-trip:  max_err = {err:.2e} m/s  "
               f"{'PASS ✓' if ok else 'FAIL ✗'}")
     except Exception as e:
         passed.append(False)
-        print(f"  [T1] EXCEPTION: {e}")
+        print(f"  [S1] EXCEPTION: {e}")
 
-    # ── T2: Real 3×3 Lambda round-trip (noise-free) ───────────────────────
+    # ── S2: Real 3×3 Lambda round-trip (noise-free) ───────────────────────
     try:
         N = 10
         sp = (N, N, N)
@@ -7294,14 +7489,14 @@ def run_self_tests(cfg: SimulationConfig,
         err    = float(np.abs(v_cor - v_true).max())
         ok     = err < tol_loose
         passed.append(ok)
-        print(f"  [T2] Non-trivial-Lambda round-trip:  max_err = {err:.2e} m/s  "
+        print(f"  [S2] Non-trivial-Lambda round-trip:  max_err = {err:.2e} m/s  "
               f"{'PASS ✓' if ok else 'FAIL ✗'}")
     except Exception as e:
         passed.append(False)
-        print(f"  [T2] EXCEPTION: {e}")
+        print(f"  [S2] EXCEPTION: {e}")
 
-    # ── T3: spherical-harmonic evaluator vs CLOSED-FORM derivative ───────
-    # An earlier T3 built a coefficient set with NO harmonics at all, so the
+    # ── S3: spherical-harmonic evaluator vs CLOSED-FORM derivative ───────
+    # An earlier S3 built a coefficient set with NO harmonics at all, so the
     # SH loop never executed and the test could not detect an error in the
     # harmonic machinery. It now checks Λ against an analytically
     # differentiable harmonic, which exercises the Schmidt normalisation,
@@ -7340,13 +7535,13 @@ def run_self_tests(cfg: SimulationConfig,
             err = max(err, abs(Lp[1, 2, k, 0, 0] - (-c_test * yk / R0t)))
         ok = err < 1e-6
         passed.append(ok)
-        print(f"  [T3] SH evaluator vs closed-form dBz/dj:  max_err = {err:.2e}  "
+        print(f"  [S3] SH evaluator vs closed-form dBz/dj:  max_err = {err:.2e}  "
               f"{'PASS ✓' if ok else 'FAIL ✗'}")
     except Exception as e:
         passed.append(False)
-        print(f"  [T3] EXCEPTION: {e}")
+        print(f"  [S3] EXCEPTION: {e}")
 
-    # ── T3b: the primary linear term must not be counted twice ───────────
+    # ── S4: the primary linear term must not be counted twice ───────────
     # Siemens .grad files list the primary term (A(1,1)/B(1,1)/A(1,0)) with
     # value 1.0. _bz_field also adds the ideal linear term analytically, so
     # if the parser kept the listed coefficient the two would sum and give
@@ -7368,7 +7563,7 @@ def run_self_tests(cfg: SimulationConfig,
         err  = float(np.abs(L0 - np.eye(3)).max())
         ok   = err < 1e-6
         passed.append(ok)
-        print("  [T3b] Primary term not double-counted, Λ(0,0,0) = I:  "
+        print("  [S4] Primary term not double-counted, Λ(0,0,0) = I:  "
               f"max_err = {err:.2e}  {'PASS ✓' if ok else 'FAIL ✗'}")
         try:
             tmp.unlink()
@@ -7376,9 +7571,9 @@ def run_self_tests(cfg: SimulationConfig,
             pass
     except Exception as e:
         passed.append(False)
-        print(f"  [T3b] EXCEPTION: {e}")
+        print(f"  [S4] EXCEPTION: {e}")
 
-    # ── T4: Poiseuille peak velocity analytical check ─────────────────────
+    # ── S5: Poiseuille peak velocity analytical check ─────────────────────
     # The discrete maximum of a parabolic profile sampled on a Cartesian
     # grid systematically under-estimates v_max because no voxel centre
     # lies exactly on the tube axis. This is the same partial-volume effect
@@ -7397,7 +7592,7 @@ def run_self_tests(cfg: SimulationConfig,
     try:
         r = cfg.tube_radius_m
         # Peak velocity is now set directly by config (see generate_poiseuille_4d);
-        # T4 checks that the discrete sampled peak matches the configured peak.
+        # S5 checks that the discrete sampled peak matches the configured peak.
         v_max_analytical = cfg.poiseuille_v_peak_m_s
 
         N  = cfg.grid_N
@@ -7423,24 +7618,24 @@ def run_self_tests(cfg: SimulationConfig,
             warning = ("  (grid under-resolves tube — only "
                        f"{vox_across_dia:.1f} voxels across diameter; "
                        f"tolerance widened to {tol*100:.0f} %)")
-        print(f"  [T4] Poiseuille v_max:  analytical = {v_max_analytical*100:.3f} cm/s  "
+        print(f"  [S5] Poiseuille v_max:  analytical = {v_max_analytical*100:.3f} cm/s  "
               f"sim_max = {v_max_sim*100:.3f} cm/s  "
               f"rel_err = {rel_err*100:.2f}%  "
               f"{'PASS ✓' if ok else 'FAIL ✗'}{warning}")
     except Exception as e:
         passed.append(False)
-        print(f"  [T4] EXCEPTION: {e}")
+        print(f"  [S5] EXCEPTION: {e}")
 
-    # ── T5: model-mismatch robustness (non-circular validation) ──────────
+    # ── S6: model-mismatch robustness (non-circular validation) ──────────
     # WHY THIS TEST EXISTS.
-    # T1/T2 invert exactly the operator they applied, so they can only
+    # S1/S2 invert exactly the operator they applied, so they can only
     # confirm the linear algebra — they cannot show that the correction
     # helps when the model is imperfect. Every simulation-only validation of
     # a GNL correction shares this weakness: the forward model and the
     # correction use the same Λ, so a perfect result is guaranteed by
     # construction and says nothing about real data.
     #
-    # T5 breaks that loop. The field is distorted with one coefficient set
+    # S6 breaks that loop. The field is distorted with one coefficient set
     # ("the scanner") and corrected with a PERTURBED set ("the calibration
     # file we were given"), mimicking the realistic case where the vendor
     # coefficients do not describe the coil exactly. A correction that only
@@ -7449,7 +7644,7 @@ def run_self_tests(cfg: SimulationConfig,
     # Report this test in the thesis alongside the headline RMSE: it is the
     # evidence that the improvement is not an artefact of self-inversion.
     #
-    # WHICH COIL T5 USES. If the real coefficient file is available it is
+    # WHICH COIL S6 USES. If the real coefficient file is available it is
     # perturbed directly, so the quoted robustness is the robustness of THIS
     # gradient system. A four-term toy coil (the fallback below) exercises the
     # same code path but its answer is not transferable to the thesis.
@@ -7469,7 +7664,7 @@ def run_self_tests(cfg: SimulationConfig,
                 """Real coefficients with a per-term Gaussian relative error."""
                 _r = np.random.default_rng(seed)
                 return GradientCoefficients(
-                    filepath="<T5-perturbed>", R0=R0t,
+                    filepath="<S6-perturbed>", R0=R0t,
                     coeffs={ax: [(t, n, m, v * (1.0 + pert * _r.standard_normal()))
                                  for (t, n, m, v) in grad_coeffs.coeffs[ax]]
                             for ax in ("x", "y", "z")},
@@ -7485,11 +7680,11 @@ def run_self_tests(cfg: SimulationConfig,
                 _r = np.random.default_rng(seed)
                 _s = lambda v: v * (1.0 + pert * _r.standard_normal())
                 return GradientCoefficients(
-                    filepath="<T5>", R0=R0t,
+                    filepath="<S6>", R0=R0t,
                     coeffs={"x": [(t, n, m,  _s(v)) for t, n, m, v in base],
                             "y": [(t, n, m, -_s(v)) for t, n, m, v in base],
                             "z": [(t, n, m,  _s(v)) for t, n, m, v in base]},
-                    coil_name="T5", max_degree=4, lnorm=4)
+                    coil_name="S6", max_degree=4, lnorm=4)
 
         # Sample the region the expansion is valid in, on a grid coarse enough
         # to stay fast: r <= R0/sqrt(3) puts every corner inside the sphere.
@@ -7504,7 +7699,7 @@ def run_self_tests(cfg: SimulationConfig,
         v_m = SimulationEngine4D.apply_forward_distortion(v_t, L_true)
         rmse_before = float(np.sqrt(np.mean((v_m - v_t) ** 2)))
 
-        print(f"  [T5] Model mismatch — coefficients from the {_src}")
+        print(f"  [S6] Model mismatch — coefficients from the {_src}")
         print("       perturbation   RMSE before → after [cm/s]   improvement")
         ok_all = True
         for _p, _seed in ((0.02, 101), (0.05, 102), (0.10, 103)):
@@ -7526,17 +7721,17 @@ def run_self_tests(cfg: SimulationConfig,
         passed.append(ok_all)
         print("       The correction still helps with an imperfect "
               "calibration file — this is the")
-        print("       non-circular evidence, unlike T1/T2. Quote this table "
+        print("       non-circular evidence, unlike S1/S2. Quote this table "
               "in the validation chapter.")
-        SELF_TEST_RESULTS["T5_model_mismatch"] = {
+        SELF_TEST_RESULTS["S6_model_mismatch"] = {
             "coefficient_source": _src,
             "grid_half_extent_m": float(_half),
             "rows": _t5_rows,
         }
     except Exception as e:
         passed.append(False)
-        print(f"  [T5] EXCEPTION: {e}")
-        SELF_TEST_RESULTS["T5_model_mismatch"] = {"exception": str(e)}
+        print(f"  [S6] EXCEPTION: {e}")
+        SELF_TEST_RESULTS["S6_model_mismatch"] = {"exception": str(e)}
 
     n_pass = sum(passed)
     n_total = len(passed)
@@ -7848,9 +8043,14 @@ def _dicom_quick_plot(
     pct_change  = float(100.0 * delta_mean / max(vmeas_mean, 1e-6))
 
     # ── Figure layout ─────────────────────────────────────────────────────
-    fig = plt.figure(figsize=(22, 9))
-    # bottom margin reserves room for the figure caption so the stats box
-    # and the caption cannot overlap.
+    # THESIS LAYOUT (layout only; every number and every line of text is
+    # the same as in the released v1.0.0): the six panels occupy the full
+    # width on top and the results box is placed BELOW them, split at a
+    # paragraph gap into two side-by-side columns so that it can be printed
+    # at text width with a legible font. The one-line note stays at the
+    # bottom of the sheet.
+    fig = plt.figure(figsize=(16, 19))
+    # bottom margin reserves room for the results box and the note.
     # PANEL REMOVED — the whole-volume before/after |v| histogram.
     #
     # It pooled every signal voxel inside R₀, which on the Circle of Willis is
@@ -7870,8 +8070,8 @@ def _dicom_quick_plot(
     # densest panel on the sheet and it now carries the direction-error block
     # as well, so it needs the height: sized for a single row its auto-fitted
     # font bottomed out at the 5.5 pt floor.
-    gs  = gridspec.GridSpec(2, 4, hspace=0.38, wspace=0.40, bottom=0.11,
-                            width_ratios=[1.0, 1.0, 1.0, 1.30])
+    gs  = gridspec.GridSpec(2, 3, hspace=0.40, wspace=0.40, bottom=0.43, top=0.935,
+                            left=0.05, right=0.98)
 
     # Central axial slice (or thin-slab MIP) at peak systole.
     #
@@ -8254,10 +8454,13 @@ def _dicom_quick_plot(
         else:
             im = ax.imshow(sl.T * 100, origin="upper", cmap="turbo",
                            vmin=0, vmax=vmax, aspect="auto")
-        ax.set_title(title, fontsize=9)
-        ax.set_xlabel("x [voxels]", fontsize=8)
-        ax.set_ylabel("y [voxels]", fontsize=8)
-        plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        ax.set_title(title, fontsize=12)
+        ax.set_xlabel("x [voxels]", fontsize=11)
+        ax.set_ylabel("y [voxels]", fontsize=11)
+        ax.tick_params(labelsize=10)
+        _cb = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        _cb.set_label("|v|  [cm/s]", fontsize=11)
+        _cb.ax.tick_params(labelsize=10)
 
     # Panel (b) — Measured
     ax1 = fig.add_subplot(gs[0, 0])
@@ -8291,9 +8494,12 @@ def _dicom_quick_plot(
                       vmin=-dlim, vmax=dlim, aspect="auto")
     ax_d.set_title("Corrected − Measured |v|  [cm/s]\n"
                    f"(stretched ±{dlim:.1f} cm/s — reveals structure)",
-                   fontsize=9)
-    ax_d.set_xlabel("x [voxels]", fontsize=8); ax_d.set_ylabel("y [voxels]", fontsize=8)
-    plt.colorbar(imd, ax=ax_d, fraction=0.046, pad=0.04)
+                   fontsize=12)
+    ax_d.set_xlabel("x [voxels]", fontsize=11); ax_d.set_ylabel("y [voxels]", fontsize=11)
+    ax_d.tick_params(labelsize=10)
+    _cbd = plt.colorbar(imd, ax=ax_d, fraction=0.046, pad=0.04)
+    _cbd.set_label("Δ|v|  [cm/s]", fontsize=11)
+    _cbd.ax.tick_params(labelsize=10)
     if lambda_corr_rel is not None or lambda_corr_r is not None:
         # Primary: relative correction vs Λ map (speed factor removed).
         # Secondary in smaller print: the absolute form, for continuity.
@@ -8303,7 +8509,7 @@ def _dicom_quick_plot(
         if lambda_corr_r is not None:
             _ann.append(f"abs (speed-confounded): {lambda_corr_r:+.2f}")
         ax_d.text(0.03, 0.97, "\n".join(_ann),
-                  transform=ax_d.transAxes, fontsize=8, va="top", ha="left",
+                  transform=ax_d.transAxes, fontsize=10, va="top", ha="left",
                   color="black",
                   bbox=dict(boxstyle="round", facecolor="white",
                             edgecolor="0.6", alpha=0.85))
@@ -8314,22 +8520,111 @@ def _dicom_quick_plot(
                      vmin=0, vmax=max(float(np.nanpercentile(sl_d*100, 99)), 0.1),
                      aspect="auto")
     _flow_note = " — flow voxels only" if _diff2d is not None else ""
-    ax3.set_title(f"|v_cor − v_meas|  [cm/s]\n(correction magnitude, {_dloc}"
-                  f"{_flow_note})",
-                  fontsize=9)
-    ax3.set_xlabel("x [voxels]", fontsize=8); ax3.set_ylabel("y [voxels]", fontsize=8)
-    plt.colorbar(im3, ax=ax3, fraction=0.046, pad=0.04)
+    ax3.set_title("|v_cor − v_meas|  [cm/s]\n(correction magnitude, flow voxels)",
+                  fontsize=12)
+    ax3.set_xlabel("x [voxels]", fontsize=11); ax3.set_ylabel("y [voxels]", fontsize=11)
+    ax3.tick_params(labelsize=10)
+    _cb3 = plt.colorbar(im3, ax=ax3, fraction=0.046, pad=0.04)
+    _cb3.set_label("|Δv|  [cm/s]", fontsize=11)
+    _cb3.ax.tick_params(labelsize=10)
+
+    # ── Crop the four image panels to the flow region (display only) ──────
+    _crop_note = ""
+    _zoom_box = DICOM_FIG05_ZOOM
+    _zoom_src = "DICOM_FIG05_ZOOM / --fig05-zoom"
+    if _zoom_box is None:
+        _zf = DICOM_FIG05_ZOOM_BY_PRESET.get(str(DATASET_PRESET))
+        if _zf is not None:
+            _nxz, _nyz = sl_diff.shape
+            _zoom_box = (int(round(_zf[0] * _nxz)), int(round(_zf[1] * _nxz)),
+                         int(round(_zf[2] * _nyz)), int(round(_zf[3] * _nyz)))
+            _zoom_src = f"preset '{DATASET_PRESET}'"
+    if _zoom_box is not None:
+        try:
+            _nx2, _ny2 = sl_diff.shape
+            _x0, _x1, _y0, _y1 = (int(v) for v in _zoom_box)
+            _x0, _x1 = max(0, min(_x0, _x1)), min(_nx2 - 1, max(_x0, _x1))
+            _y0, _y1 = max(0, min(_y0, _y1)), min(_ny2 - 1, max(_y0, _y1))
+            # The preset windows were chosen for the thesis datasets. On other
+            # data a window can hide flow, so report how much of the flow in
+            # this slice it leaves outside (display only; nothing is changed).
+            if _flow2d is not None and _zoom_src.startswith("preset"):
+                _fl = np.asarray(_flow2d, bool)
+                _n_all = int(_fl.sum())
+                _n_in = int(_fl[_x0:_x1 + 1, _y0:_y1 + 1].sum())
+                if _n_all > 0 and _n_in < 0.9 * _n_all:
+                    print(f"  [fig05] NOTE: the preset zoom window leaves "
+                          f"{100.0 * (1 - _n_in / _n_all):.0f}% of the flow voxels of "
+                          "this slice outside the picture. Set --fig05-zoom "
+                          f"(e.g. 0,{_nx2 - 1},0,{_ny2 - 1} for the full slice) if "
+                          "that is not intended; statistics are unaffected.")
+            for _axc in (ax1, ax2, ax_d, ax3):
+                _axc.set_xlim(_x0 - 0.5, _x1 + 0.5)
+                _axc.set_ylim(_y1 + 0.5, _y0 - 0.5)          # origin="upper"
+            _frac = ((_x1 - _x0 + 1) * (_y1 - _y0 + 1)) / float(_nx2 * _ny2)
+            _crop_note = (f" Image panels zoomed to x {_x0}–{_x1} × y {_y0}–{_y1} "
+                          f"voxels ({100*_frac:.0f}% of the slice; set by the user).")
+            print(f"  [fig05] Image panels zoomed to x {_x0}–{_x1}, y {_y0}–{_y1} "
+                  f"voxels ({100*_frac:.0f}% of the slice; {_zoom_src}; "
+                  "display only).")
+        except Exception as _exc:
+            print(f"  [fig05] Zoom skipped ({_exc}).")
+    elif DICOM_FIG05_CROP:
+        try:
+            _cm = np.isfinite(sl_diff)
+            if _diff2d is not None:
+                _cm = _cm & _diff2d
+            if _flow2d is not None:
+                _cm = _cm & _flow2d
+            _nx2, _ny2 = _cm.shape
+            if _cm.any() and _cm.mean() >= 0.5:
+                print("  [fig05] Crop not applied: flow voxels cover "
+                      f"{100*_cm.mean():.0f}% of the slice.")
+            if _cm.any() and _cm.mean() < 0.5:
+                _ix = np.where(_cm.any(axis=1))[0]; _iy = np.where(_cm.any(axis=0))[0]
+                _x0, _x1 = int(_ix.min()), int(_ix.max())
+                _y0, _y1 = int(_iy.min()), int(_iy.max())
+                _px = max(6, int(round(DICOM_FIG05_CROP_MARGIN * (_x1 - _x0 + 1))))
+                _py = max(6, int(round(DICOM_FIG05_CROP_MARGIN * (_y1 - _y0 + 1))))
+                _x0, _x1 = _x0 - _px, _x1 + _px
+                _y0, _y1 = _y0 - _py, _y1 + _py
+                _mnx = int(round(DICOM_FIG05_CROP_MIN_FRAC * _nx2))
+                _mny = int(round(DICOM_FIG05_CROP_MIN_FRAC * _ny2))
+                if _x1 - _x0 + 1 < _mnx:
+                    _c = (_x0 + _x1) // 2; _x0, _x1 = _c - _mnx // 2, _c + _mnx // 2
+                if _y1 - _y0 + 1 < _mny:
+                    _c = (_y0 + _y1) // 2; _y0, _y1 = _c - _mny // 2, _c + _mny // 2
+                _x0, _x1 = max(0, _x0), min(_nx2 - 1, _x1)
+                _y0, _y1 = max(0, _y0), min(_ny2 - 1, _y1)
+                _frac = ((_x1 - _x0 + 1) * (_y1 - _y0 + 1)) / float(_nx2 * _ny2)
+                if _frac < 0.85:
+                    for _axc in (ax1, ax2, ax_d, ax3):
+                        _axc.set_xlim(_x0 - 0.5, _x1 + 0.5)
+                        _axc.set_ylim(_y1 + 0.5, _y0 - 0.5)      # origin="upper"
+                    _crop_note = (f" Image panels cropped to the flow region, "
+                                  f"x {_x0}–{_x1} × y {_y0}–{_y1} voxels "
+                                  f"({100*_frac:.0f}% of the slice).")
+                    print(f"  [fig05] Image panels cropped to x {_x0}–{_x1}, "
+                          f"y {_y0}–{_y1} voxels ({100*_frac:.0f}% of the slice; "
+                          "display only, statistics use the full volume).")
+                else:
+                    print("  [fig05] Crop not applied: the flow region spans "
+                          f"{100*_frac:.0f}% of the slice (nothing to cut). "
+                          "Use --fig05-zoom x0,x1,y0,y1 to enlarge a region.")
+        except Exception as _exc:
+            print(f"  [fig05] Crop skipped ({_exc}).")
 
     # Panel (e) — Per-slice correction profile
     ax4 = fig.add_subplot(gs[1, 1])
     ax4.plot(per_slice_delta, np.arange(Nz), color="#d62728", lw=1.5)
-    ax4.set_xlabel("Mean |Δv|  [cm/s]", fontsize=9)
-    ax4.set_ylabel("Slice index (z)", fontsize=9)
-    ax4.set_title(f"Correction magnitude\nper slice (time-averaged, {_ps_basis})",
-                  fontsize=9)
+    ax4.set_xlabel("Mean |Δv|  [cm/s]", fontsize=11)
+    ax4.set_ylabel("Slice index (z)", fontsize=11)
+    ax4.set_title("Correction magnitude\nper slice (time-averaged)",
+                  fontsize=12)
+    ax4.tick_params(labelsize=10)
     ax4.axvline(delta_mean, color="gray", ls="--", lw=1, alpha=0.7,
                 label=f"mean {delta_mean:.2f} cm/s")
-    ax4.legend(fontsize=8); ax4.grid(True, alpha=0.3)
+    ax4.legend(fontsize=10); ax4.grid(True, alpha=0.3)
     ax4.invert_yaxis()   # superior slices at top
 
     # Panel (g) — Correction magnitude vs distance from isocenter
@@ -8364,18 +8659,18 @@ def _dicom_quick_plot(
                       label="mean |Δv|")
             ax_r.plot(centres, p90_d, "--", color="#c2a5cf", lw=1.2,
                       label="90th percentile")
-            ax_r.set_xlabel("Distance from isocenter  r [mm]", fontsize=9)
-            ax_r.set_ylabel("Correction |Δv|  [cm/s]", fontsize=9)
+            ax_r.set_xlabel("Distance from isocenter  r [mm]", fontsize=11)
+            ax_r.set_ylabel("Correction |Δv|  [cm/s]", fontsize=11)
+            ax_r.tick_params(labelsize=10)
             # State what is shown, not what the reader should conclude. GNL
             # vanishing at r = 0 is a property of the model, not something
             # this panel demonstrates — an off-isocentre phantom never
             # samples small r, so the curve cannot be seen to reach zero.
             ax_r.set_title(
                 "Correction |Δv| vs distance from isocentre\n"
-                f"(sampled range r = {rr.min():.0f}–{rr.max():.0f} mm; "
-                "Λ → I at r → 0 by construction, not sampled here)",
-                fontsize=8)
-            ax_r.legend(fontsize=7); ax_r.grid(True, alpha=0.3)
+                f"(sampled range r = {rr.min():.0f}–{rr.max():.0f} mm)",
+                fontsize=12)
+            ax_r.legend(fontsize=10); ax_r.grid(True, alpha=0.3)
         else:
             ax_r.axis("off")
             ax_r.text(0.5, 0.5, "insufficient voxels\nfor radial profile",
@@ -8387,9 +8682,8 @@ def _dicom_quick_plot(
                   ha="center", va="center", transform=ax_r.transAxes,
                   fontsize=9, color="grey")
 
-    # Panel (f) — Statistics text box
-    ax5 = fig.add_subplot(gs[0:2, 3])
-    ax5.axis("off")
+    # Panel (f) — Statistics text box (created below, after the text is
+    # assembled, as two columns underneath the panels).
     # ── DIRECTION-ERROR block ────────────────────────────────────────────
     # The task description names errors in "both the magnitude AND direction
     # of encoded velocities". |Δv| covers magnitude; nothing in this figure
@@ -8526,35 +8820,61 @@ def _dicom_quick_plot(
          if lambda_corr_r is not None else
          "  abs (speed-confounded): n/a"),
     ]
-    # ── Size the font to the panel, in BOTH directions ───────────────────
+    # ── Two-column results box below the panels ──────────────────────────
     #
-    # The first version used fixed line-count thresholds and let a 34-line box
-    # overflow into the caption. The second sized on panel HEIGHT alone, which
-    # fixed the overflow but left the box unreadable: height is the binding
-    # constraint here (the panel holds ~40 short lines), so the font was
-    # pinned near the floor while roughly half the panel WIDTH stayed empty.
-    #
-    # Both limits are now computed and the smaller wins, so the text grows
-    # until it runs out of room in one direction or the other. For a monospace
-    # face the advance width is ~0.60 em, so a line of L characters needs
-    # L * 0.60 * fontsize points. The ceiling is 11 pt: past that the box
-    # starts to compete with the panel titles for attention.
+    # The text block is split at ONE paragraph gap (a blank line) chosen so
+    # that the two columns are as equal in length as possible; the lines
+    # themselves are not changed. Each column gets its own rounded yellow
+    # box. The font is sized to fit the longer column in both width and
+    # height and the same size is used for both columns.
+    _blank = [i for i, ln in enumerate(lines) if ln == "" and 0 < i < len(lines) - 1]
+    _best = None
+    for _i in _blank:
+        _hmax = max(_i, len(lines) - _i - 1)
+        if _best is None or _hmax < _best[0]:
+            _best = (_hmax, _i)
+    _cols = ([lines[:_best[1]], lines[_best[1] + 1:]] if _best is not None
+             else [lines])
+    _cols = [list(c) for c in _cols]
+    for _c in _cols:
+        while _c and _c[-1] == "":
+            _c.pop()
+        while _c and _c[0] == "":
+            _c.pop(0)
+    _box_top, _box_bot = 0.37, 0.04
+    _gapx, _lft, _rgt = 0.025, 0.05, 0.98
+    _ncol = len(_cols)
+    _cw = (_rgt - _lft - (_ncol - 1) * _gapx) / _ncol
+    _axes5 = [fig.add_axes([_lft + k * (_cw + _gapx), _box_bot, _cw, _box_top - _box_bot])
+              for k in range(_ncol)]
+    for _ax in _axes5:
+        _ax.axis("off")
     fig.canvas.draw()
-    _bb    = ax5.get_window_extent(fig.canvas.get_renderer())
-    _h_pt  = _bb.height * 72.0 / fig.dpi
-    _w_pt  = _bb.width  * 72.0 / fig.dpi
-    _n_ln  = max(len(lines), 1)
-    _max_c = max((len(ln) for ln in lines), default=1)
-    _fs_h  = _h_pt / (_n_ln * 1.32)                 # line height incl. spacing
-    _fs_w  = (_w_pt * 0.94) / (_max_c * 0.60)       # 6% margin for the padding
-    _fs    = float(max(5.5, min(11.0, min(_fs_h, _fs_w))))
-    print(f"  [DICOM] stats box: {_n_ln} lines x {_max_c} chars → "
-          f"{_fs:.1f} pt (height allows {_fs_h:.1f}, width allows {_fs_w:.1f})")
-    ax5.text(0.02, 0.99, "\n".join(lines),
-             transform=ax5.transAxes, fontsize=_fs, linespacing=1.15,
-             va="top", ha="left", family="monospace",
-             bbox=dict(boxstyle="round", pad=0.35, facecolor="lightyellow",
-                       edgecolor="goldenrod", alpha=0.85))
+    _fs_cands = []
+    for _ax, _c in zip(_axes5, _cols):
+        _bb   = _ax.get_window_extent(fig.canvas.get_renderer())
+        _h_pt = _bb.height * 72.0 / fig.dpi
+        _w_pt = _bb.width  * 72.0 / fig.dpi
+        _n_ln = max(len(_c), 1)
+        _max_c = max((len(ln) for ln in _c), default=1)
+        _fs_cands.append(min(_h_pt * 0.94 / (_n_ln * 1.20),      # height limit
+                             _w_pt * 0.90 / (_max_c * 0.60)))    # width limit
+    _fs = float(max(5.5, min(26.0, min(_fs_cands))))
+    print(f"  [DICOM] stats box: {len(lines)} lines in {_ncol} columns "
+          f"({' + '.join(str(len(c)) for c in _cols)} lines) → {_fs:.1f} pt")
+    from matplotlib.patches import FancyBboxPatch as _FBP
+    for _ax, _c in zip(_axes5, _cols):
+        _bb   = _ax.get_window_extent(fig.canvas.get_renderer())
+        _h_pt = _bb.height * 72.0 / fig.dpi
+        _ls   = (_h_pt * 0.94) / (max(len(_c), 1) * _fs)
+        _ls   = float(min(max(_ls, 1.05), 1.45))
+        _ax.add_patch(_FBP((0.0, 0.0), 1.0, 1.0, boxstyle="round,pad=0.01",
+                           transform=_ax.transAxes, facecolor="lightyellow",
+                           edgecolor="goldenrod", alpha=0.85, clip_on=False))
+        _ax.text(0.04, 0.97, "\n".join(_c),
+                 transform=_ax.transAxes, fontsize=_fs, linespacing=_ls,
+                 va="top", ha="left", family="monospace")
+    ax5 = _axes5[0]   # kept for any later reference
 
     # Dataset label for the title: use the explicit global override if set,
     # otherwise derive it from the output directory name so the figure title
@@ -8569,12 +8889,17 @@ def _dicom_quick_plot(
                 _stem = _stem[len(_pfx):]
         _label = _stem.replace("_", " ").strip() or "DICOM dataset"
 
+    # Headline sized for print (the sheet is placed at text width, about a
+    # third of its drawn size, so 18 pt here is about 6.5 pt on paper). The
+    # former parenthesis "(no independent ground truth — the Λ-map
+    # correlation is an implementation consistency check, not a validation)"
+    # is dropped from the figure: it is stated in the console output, in the
+    # run record and in the document text, and it made the headline too long
+    # to print legibly.
     fig.suptitle(
         f"DICOM Correction Summary — {_label}  |  {coil}\n"
-        "Comparing v_measured vs v_corrected  "
-        "(no independent ground truth — the Λ-map correlation is an "
-        "implementation consistency check, not a validation)",
-        fontsize=10, fontweight="bold")
+        "Comparing v_measured vs v_corrected",
+        fontsize=18, fontweight="bold", y=0.995)
 
     # ONE LINE. A thesis figure carries a short note; the discussion belongs
     # in the caption underneath it in the document.
@@ -8599,13 +8924,27 @@ def _dicom_quick_plot(
              f"|v| = √(vx²+vy²+vz²) from the phase data; magnitude masks "
              f"background only. Panels show {_what}; all statistics use the "
              "full volume and every phase. Radiological convention (origin "
-             "upper) — display only.",
-             ha="center", va="bottom", fontsize=9, color="0.25", wrap=True)
+             "upper) — display only." + _crop_note
+             + str(globals().get("_DICOM_ROI_NOTE", "")),
+             ha="center", va="bottom", fontsize=10, color="0.25", wrap=True)
 
 
     out_p = Path(output_dir) / f"fig{_dcm_num_pre:02d}_dicom_correction.png"
     if ENABLED_FIGS is None or 19 in ENABLED_FIGS:
-        fig.savefig(out_p, dpi=300, bbox_inches="tight")
+        import os as _os, time as _time
+        _tmp = out_p.with_name(out_p.stem + "_tmp" + out_p.suffix)
+        try:
+            fig.savefig(_tmp, dpi=250, bbox_inches="tight")
+            _os.replace(_tmp, out_p)
+        except OSError:
+            _time.sleep(1.0)
+            try:
+                fig.savefig(_tmp, dpi=150, bbox_inches="tight")
+                _os.replace(_tmp, out_p)
+            except OSError:
+                out_p = out_p.with_name(out_p.stem + "_retry" + out_p.suffix)
+                fig.savefig(out_p, dpi=150, bbox_inches="tight")
+                print(f"  [DICOM] WARNING: original name was locked — saved as {out_p.name}")
         plt.close(fig)
         print(f"  [DICOM] Diagnostic figure saved → {out_p.name}")
     else:
@@ -8821,8 +9160,12 @@ class _CliArgs:
         self.no_axis_flags   = bool(a.no_axis_flags)
         self.direction_permute = a.direction_permute
         self.direction_signs   = a.direction_signs
+        self.directions_blocked = bool(a.directions_blocked)
         self.mask_frac       = a.mask_frac
         self.fig05_slice     = a.fig05_slice
+        self.fig05_zoom      = a.fig05_zoom
+        self.roi_box         = a.roi_box
+        self.ext_mask        = a.ext_mask
         self.mode1_pulsatile = bool(a.mode1_pulsatile)
 
     def launch(self):
@@ -8923,6 +9266,23 @@ def _parse_cli(argv=None):
                          "flow-content pick (0-based, in the DICOM's own slice order). "
                          "Use when the automatic choice lands on a corrupted or "
                          "artefact-contaminated slice.")
+    ap.add_argument("--fig05-zoom", dest="fig05_zoom", default=None,
+                    metavar="X0,X1,Y0,Y1",
+                    help="zoom the four image panels of fig05 to this box, given "
+                         "as voxel indices of the displayed slice (e.g. 60,200,90,210 "
+                         "for the arterial ring of the Circle of Willis). Display "
+                         "only; overrides the automatic crop.")
+    ap.add_argument("--roi-box", dest="roi_box", default=None,
+                    metavar="X0,X1,Y0,Y1,Z0,Z1",
+                    help="restrict the ANALYSIS SET to this voxel box (inclusive "
+                         "indices; x and y as in the fig05 image panels, z the "
+                         "slice index). Statistics only: the correction is still "
+                         "applied to every voxel. Use it to exclude e.g. a static "
+                         "fluid reservoir beside the flow channel.")
+    ap.add_argument("--mask", dest="ext_mask", default=None, metavar="FILE",
+                    help="restrict the ANALYSIS SET to an external mask: a .npy/.npz "
+                         "array on the same grid as the data (non-zero = keep), or "
+                         "a NIfTI file if nibabel is installed. Statistics only.")
     ap.add_argument("--mask-frac", dest="mask_frac", type=float, default=None,
                     metavar="F",
                     help="signal-mask threshold as a fraction (0-1) of the magnitude "
@@ -8941,6 +9301,13 @@ def _parse_cli(argv=None):
                     help="per-component sign flips for this run, three values of +1/-1, "
                          "e.g. --direction-signs=1,1,-1 (use '=' when the first value is "
                          "negative). Default: none")
+    ap.add_argument("--directions-blocked", dest="directions_blocked",
+                    action="store_true",
+                    help="cardiac 3-direction series whose frames are stored "
+                         "block-wise (all phases of direction 1, then 2, then 3) "
+                         "although the headers carry interleaved trigger times, "
+                         "e.g. a post-processed export that copied the original "
+                         "headers. Default: interleaved (scanner convention)")
     ap.add_argument("--no-axis-flags", dest="no_axis_flags", action="store_true",
                     help="do NOT apply any axis permutation / sign flips, including "
                          "values edited into DICOM_DIRECTION_PERMUTE / _SIGNS in the "
@@ -9072,10 +9439,25 @@ def main(argv=None):
         DICOM_MASK_FRAC_EXPLICIT = True
         print(f"  Mask fraction  : {_mf:.0%} of the magnitude maximum — set on the "
               "command line (overrides the preset)")
+    global DICOM_ROI_BOX, DICOM_EXT_MASK
+    if getattr(gui, "roi_box", None):
+        _rb = tuple(int(float(t)) for t in str(gui.roi_box).split(","))
+        if len(_rb) != 6:
+            raise ValueError("--roi-box needs six integers: X0,X1,Y0,Y1,Z0,Z1")
+        DICOM_ROI_BOX = _rb
+        print(f"  Analysis box   : x {_rb[0]}–{_rb[1]}, y {_rb[2]}–{_rb[3]}, "
+              f"z {_rb[4]}–{_rb[5]} voxels (statistics only; --roi-box)")
+    if getattr(gui, "ext_mask", None):
+        DICOM_EXT_MASK = str(gui.ext_mask)
+        print(f"  Analysis mask  : {DICOM_EXT_MASK} (statistics only; --mask)")
     # Axis permutation / signs: explicit per-run values from the command line.
     # They are applied AFTER the dataset preset (which may reset the flags) and
     # bypass the scope guard, because the user named them for THIS dataset.
-    global DICOM_DIRECTION_SCOPE, AXIS_FLAGS_SOURCE
+    global DICOM_DIRECTION_SCOPE, AXIS_FLAGS_SOURCE, DICOM_DIRECTIONS_BLOCKED
+    DICOM_DIRECTIONS_BLOCKED = bool(getattr(gui, "directions_blocked", False))
+    if DICOM_DIRECTIONS_BLOCKED:
+        print("  Frame layout   : BLOCKED (all phases of one direction, then the "
+              "next) — set for this run")
     _cli_perm  = getattr(gui, "direction_permute", None)
     _cli_signs = getattr(gui, "direction_signs", None)
     if _cli_perm or _cli_signs:
@@ -9243,8 +9625,11 @@ def main(argv=None):
             "sim_mode":    sim_mode,
             "flow_pattern": flow_pattern,
             "dicom_dir":   dicom_dir,
+            "magnitude_dir": (str(DICOM_MAGNITUDE_DIR) if DICOM_MAGNITUDE_DIR else None),
             "output_dir":  output_dir,
             "dataset_preset":        gui.dataset_preset,
+            "analysis_roi_box":      (list(DICOM_ROI_BOX) if DICOM_ROI_BOX else None),
+            "analysis_mask_file":    DICOM_EXT_MASK,
             "dicom_direction_signs": (list(DICOM_DIRECTION_SIGNS)
                                       if DICOM_DIRECTION_SIGNS else None),
             "dicom_direction_permute": DICOM_DIRECTION_PERMUTE,
@@ -9252,6 +9637,8 @@ def main(argv=None):
             "axis_flags_source":       AXIS_FLAGS_SOURCE,
             "dicom_geometric_slice_spacing": bool(DICOM_GEOMETRIC_SLICE_SPACING),
             "dicom_direction_order":   DICOM_DIRECTION_ORDER,
+            "dicom_frame_layout":      ("blocked" if DICOM_DIRECTIONS_BLOCKED
+                                        else "interleaved"),
             "random_seed": 42,
             "numpy_version":      np.__version__,
             "python_executable":  sys.executable,
@@ -9300,7 +9687,7 @@ def main(argv=None):
             },
         },
         # M7 — self-test outcomes belong in the reproducibility record, not
-        # only in the console scrollback. T5 is the non-circular test and is
+        # only in the console scrollback. S6 is the non-circular test and is
         # the one the thesis quotes.
         "self_tests": SELF_TEST_RESULTS,
     }
@@ -9980,6 +10367,7 @@ def main(argv=None):
                 if _mag_pre is not None or DICOM_MAGNITUDE_DIR:
                     mag_vol = (_mag_pre if _mag_pre is not None
                                else DicomLoader.load_magnitude(DICOM_MAGNITUDE_DIR))
+                    _roi_record = None       # set below when a box/mask is applied
                     if mag_vol is not None and mag_vol.shape == inside_r0_d.shape:
                         _mask_record = None
                         if DICOM_MAGNITUDE_MASK_FRAC is None:
@@ -10171,6 +10559,73 @@ def main(argv=None):
                             except Exception as _pex:
                                 print(f"  [DICOM] main-object restriction skipped "
                                       f"({type(_pex).__name__}: {_pex})")
+                        # ── user-defined restriction of the analysis set ──────────
+                        # (--roi-box / --mask). Applied AFTER the automatic masks and
+                        # after sig_air was taken, so the noise level is still
+                        # measured against the untouched air background. Statistics
+                        # only: v_corr is computed for every voxel regardless.
+                        _roi_record = None
+                        if DICOM_ROI_BOX is not None or DICOM_EXT_MASK is not None:
+                            try:
+                                _roi = np.ones(inside_r0_d.shape, bool)
+                                _roi_record = {"applies_to": "analysis set (statistics only)"}
+                                if DICOM_ROI_BOX is not None:
+                                    _bx = [int(v) for v in DICOM_ROI_BOX]
+                                    _nx_, _ny_, _nz_ = inside_r0_d.shape
+                                    _x0, _x1 = sorted((max(0, _bx[0]), min(_nx_ - 1, _bx[1])))
+                                    _y0, _y1 = sorted((max(0, _bx[2]), min(_ny_ - 1, _bx[3])))
+                                    _z0, _z1 = sorted((max(0, _bx[4]), min(_nz_ - 1, _bx[5])))
+                                    _bm = np.zeros(inside_r0_d.shape, bool)
+                                    _bm[_x0:_x1 + 1, _y0:_y1 + 1, _z0:_z1 + 1] = True
+                                    _roi &= _bm
+                                    _roi_record["box_xyz_inclusive"] = [_x0, _x1, _y0, _y1, _z0, _z1]
+                                if DICOM_EXT_MASK is not None:
+                                    _mp = str(DICOM_EXT_MASK)
+                                    if _mp.lower().endswith((".nii", ".nii.gz")):
+                                        import nibabel as _nib          # optional dependency
+                                        _em = np.asarray(_nib.load(_mp).dataobj)
+                                    else:
+                                        _em = np.load(_mp)
+                                        if hasattr(_em, "files"):       # .npz: first array
+                                            _em = _em[_em.files[0]]
+                                    _em = np.asarray(_em)
+                                    if _em.ndim == 4 and _em.shape[-1] == 1:
+                                        _em = _em[..., 0]
+                                    if _em.shape != inside_r0_d.shape:
+                                        raise ValueError(
+                                            f"mask shape {tuple(_em.shape)} does not match the "
+                                            f"volume {tuple(inside_r0_d.shape)} (x, y, z array axes)")
+                                    _roi &= (_em != 0)
+                                    _roi_record["mask_file"] = _mp
+                                    _roi_record["mask_voxels"] = int((_em != 0).sum())
+                                _n_pre_roi = int(inside_r0_d.sum())
+                                inside_r0_d = inside_r0_d & _roi
+                                sig = sig & _roi
+                                _roi_record["analysis_voxels_before"] = _n_pre_roi
+                                _roi_record["analysis_voxels_after"] = int(inside_r0_d.sum())
+                                _roi_record["removed_voxels"] = _n_pre_roi - int(inside_r0_d.sum())
+                                print("  [DICOM] Analysis set restricted by the user "
+                                      f"({'box' if DICOM_ROI_BOX is not None else ''}"
+                                      f"{' + ' if DICOM_ROI_BOX is not None and DICOM_EXT_MASK is not None else ''}"
+                                      f"{'mask' if DICOM_EXT_MASK is not None else ''}): "
+                                      f"{int(inside_r0_d.sum()):,} voxels (was {_n_pre_roi:,}; "
+                                      f"{_n_pre_roi - int(inside_r0_d.sum()):,} removed). "
+                                      "Statistics only; the correction is applied everywhere.")
+                                globals()["_DICOM_ROI_NOTE"] = (
+                                    f" Analysis set restricted by the user to "
+                                    + (f"the box x {_roi_record['box_xyz_inclusive'][0]}–"
+                                       f"{_roi_record['box_xyz_inclusive'][1]}, y "
+                                       f"{_roi_record['box_xyz_inclusive'][2]}–"
+                                       f"{_roi_record['box_xyz_inclusive'][3]}, z "
+                                       f"{_roi_record['box_xyz_inclusive'][4]}–"
+                                       f"{_roi_record['box_xyz_inclusive'][5]}"
+                                       if DICOM_ROI_BOX is not None else "an external mask")
+                                    + f" ({int(inside_r0_d.sum()):,} voxels; statistics only).")
+                            except Exception as _rex:
+                                print(f"  [DICOM] --roi-box/--mask NOT applied "
+                                      f"({type(_rex).__name__}: {_rex}); analysis set unchanged.")
+                                _roi_record = {"error": f"{type(_rex).__name__}: {_rex}",
+                                               "applied": False}
                         signal_only_frac = float(inside_r0_d.mean())
                         mag_for_plot = mag_vol
                         print("  [DICOM] Magnitude signal mask applied: "
@@ -11715,6 +12170,18 @@ def main(argv=None):
                         # raised inside this handler propagates out of the
                         # whole try/except pair, which is why the outer guard
                         # below exists.
+                        # --fig05-zoom x0,x1,y0,y1 → manual zoom box for the
+                        # image panels (overrides the automatic crop).
+                        _fz = getattr(gui, "fig05_zoom", None)
+                        if _fz:
+                            try:
+                                _fzv = tuple(int(float(t)) for t in str(_fz).split(","))
+                                if len(_fzv) != 4:
+                                    raise ValueError("needs four integers")
+                                globals()["DICOM_FIG05_ZOOM"] = _fzv
+                            except Exception as _ze:
+                                print(f"  [fig05] --fig05-zoom ignored ({_ze}); "
+                                      "expected x0,x1,y0,y1 in voxels.")
                         _dicom_quick_plot(v_dcm, v_corr_d, inside_r0_d,
                                            output_dir, coil=grad_coeffs.coil_name,
                                            lambda_dev=lambda_dev_d,
@@ -11791,6 +12258,8 @@ def main(argv=None):
                     dicom_summary["signal_mask"] = _mask_record
                 if _pipe_extra is not None:
                     dicom_summary["pipe_main_object_only"] = _pipe_extra
+                if _roi_record is not None:
+                    dicom_summary["analysis_roi"] = _roi_record
 
                 # ── VTK export for 3D visualisation in ParaView ───────────
                 # Writes the measured and corrected velocity fields (and the
@@ -12073,7 +12542,7 @@ def main(argv=None):
                          "correction. It is near-total by construction "
                          "because the forward model and the inverse use the "
                          "same Lambda -- it verifies the inversion, it does "
-                         "not validate the field model (see self_tests.T5)."),
+                         "not validate the field model (see self_tests.S6_model_mismatch)."),
             },
             "discretisation": {
                 "v_peak_configured_cm_s": float(res.v_peak_configured_m_s*100),

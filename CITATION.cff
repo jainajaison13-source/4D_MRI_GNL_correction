@@ -6,15 +6,18 @@ authors:
   - family-names: Jaison
     given-names: Jaina
     affiliation: "Otto von Guericke University Magdeburg, Faculty of Electrical Engineering and Information Technology"
-version: 1.0.0
-date-released: 2026-10-11
-license: MIT
-repository-code: "https://github.com/jainajaison13-source/4D_MRI_GNL_correction"
-doi: 10.5281/zenodo.23348758
+version: 1.0.1
+date-released: 2026-11-06
+doi: 10.5281/zenodo.23348757
 identifiers:
   - type: doi
     value: 10.5281/zenodo.23348758
-    description: "Zenodo archive of release v1.0.0"
+    description: "Version 1.0.0"
+  - type: doi
+    value: 10.5281/zenodo.23348757
+    description: "All versions (resolves to the latest version, v1.0.1)"
+license: MIT
+repository-code: "https://github.com/jainajaison13-source/4D_MRI_GNL_correction"
 keywords:
   - 4D flow MRI
   - phase-contrast MRI
